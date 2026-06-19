@@ -47,7 +47,7 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      # 动态且临时替换包名（含回退逻辑）
+      # 动态且临时替换包名及 FileProvider 授权标识（含回退逻辑）
       - name: Customize Android Package Name
         shell: python
         env:
@@ -68,8 +68,8 @@ jobs:
               target_android = macos_input
               
           if target_android and target_android != "org.yangdai.kori":
+              # 1. 优先定位并修改 build.gradle.kts 中的 applicationId
               file_path = "composeApp/build.gradle.kts"
-              
               if not os.path.exists(file_path):
                   for root, dirs, files in os.walk("."):
                       if "build.gradle.kts" in files:
@@ -92,9 +92,31 @@ jobs:
                       with open(file_path, "w", encoding="utf-8") as f:
                           f.write(content)
                   except Exception as e:
-                      print(f"Error modifying file: {e}")
+                      print(f"Error modifying build.gradle.kts: {e}")
+              
+              # 2. 定位并修改 AndroidManifest.xml 中的 FileProvider authorities
+              manifest_path = "composeApp/src/androidMain/AndroidManifest.xml"
+              if not os.path.exists(manifest_path):
+                  for root, dirs, files in os.walk("."):
+                      if "AndroidManifest.xml" in files:
+                          manifest_path = os.path.join(root, "AndroidManifest.xml")
+                          break
+              
+              if os.path.exists(manifest_path):
+                  print(f"Modifying FileProvider authorities in {manifest_path} to {target_android}.fileprovider")
+                  try:
+                      with open(manifest_path, "r", encoding="utf-8") as f:
+                          manifest_content = f.read()
+                      # 替换默认的 FileProvider authority
+                      old_authority = 'android:authorities="org.yangdai.kori.fileprovider"'
+                      new_authority = f'android:authorities="{target_android}.fileprovider"'
+                      manifest_content = manifest_content.replace(old_authority, new_authority)
+                      with open(manifest_path, "w", encoding="utf-8") as f:
+                          f.write(manifest_content)
+                  except Exception as e:
+                      print(f"Error modifying AndroidManifest.xml: {e}")
               else:
-                  print("Warning: Could not find build.gradle.kts containing specified applicationId.")
+                  print("Warning: Could not find AndroidManifest.xml to update FileProvider authorities.")
 
       - name: Build Release APK
         run: ./gradlew :composeApp:assembleRelease
@@ -113,11 +135,9 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          # 获取 build-tools 目录下最新的 apksigner
           APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -V | tail -n1)
           echo "Using apksigner at: $APKSIGNER"
           
-          # 查找所有生成的 APK 文件并循环执行签名
           find composeApp/build/outputs/apk/release -name "*.apk" | while read -r APK_FILE; do
               echo "=============================================="
               echo "Signing file: $APK_FILE"
@@ -127,7 +147,6 @@ jobs:
                               --key-pass pass:"$KEY_PASSWORD" \
                               "$APK_FILE"
               
-              # 验证并输出签名格式（V1-V4 检验状态）
               echo "Verifying signature of: $APK_FILE"
               $APKSIGNER verify --verbose "$APK_FILE"
           done
