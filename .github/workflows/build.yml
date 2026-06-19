@@ -106,19 +106,33 @@ jobs:
         run: |
           echo "$KEYSTORE_BASE64" | base64 --decode > release.keystore
 
-      # 签名并验证 APK
-      - name: Sign APK
+      # 签名并验证所有生成的 APK 文件
+      - name: Sign APKs
         env:
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          # 获取 build-tools 目录下最新的 apksigner
           APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -V | tail -n1)
-          echo "Using apksigner at $APKSIGNER"
-          APK_FILE=$(find composeApp/build/outputs/apk/release -name "*.apk" | head -n 1)
-          echo "Found APK to sign: $APK_FILE"
-          $APKSIGNER sign --ks release.keystore --ks-pass pass:"$KEYSTORE_PASSWORD" --ks-key-alias "$KEY_ALIAS" --key-pass pass:"$KEY_PASSWORD" "$APK_FILE"
-          $APKSIGNER verify "$APK_FILE"
+          echo "Using apksigner at: $APKSIGNER"
+          
+          # 查找所有生成的 APK 文件并循环执行签名
+          find composeApp/build/outputs/apk/release -name "*.apk" | while read -r APK_FILE; do
+              echo "=============================================="
+              echo "Signing file: $APK_FILE"
+              $APKSIGNER sign --ks release.keystore \
+                              --ks-pass pass:"$KEYSTORE_PASSWORD" \
+                              --ks-key-alias "$KEY_ALIAS" \
+                              --key-pass pass:"$KEY_PASSWORD" \
+                              "$APK_FILE"
+              
+              # 验证并输出签名格式（V1-V4 检验状态）
+              echo "Verifying signature of: $APK_FILE"
+              $APKSIGNER verify --verbose "$APK_FILE"
+          done
+          echo "=============================================="
+          echo "All APK packages have been successfully signed."
 
       - name: Upload Android Artifact
         uses: actions/upload-artifact@v4
